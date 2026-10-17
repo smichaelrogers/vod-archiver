@@ -1,0 +1,105 @@
+# Twitch VOD Archiver — Ganymede deployment tuned for low resource usage.
+# Based on the upstream compose file: https://github.com/Zibbp/ganymede/blob/main/docker-compose.yml
+#
+# Do not run `docker compose` directly — use ./scripts/compose.sh, which loads
+# config.env and .secrets.env for variable interpolation.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  ganymede:
+    container_name: ganymede
+    image: ghcr.io/zibbp/ganymede:4.21.0
+    restart: unless-stopped
+    depends_on:
+      ganymede-db:
+        condition: service_healthy
+    environment:
+      - DEBUG=false
+      - TZ=${TZ:-America/New_York}
+      # Data paths in container. Temp lives on the archive drive so finished
+      # recordings are *renamed* into place instead of copied (saves disk I/O).
+      - VIDEOS_DIR=/data/videos
+      - TEMP_DIR=/data/videos/.ganymede-temp
+      - LOGS_DIR=/data/logs
+      - CONFIG_DIR=/data/config
+      - SKIP_CHOWN=${SKIP_CHOWN:-false}
+      # Database
+      - DB_HOST=ganymede-db
+      - DB_PORT=5432
+      - DB_USER=ganymede
+      - DB_PASS=${DB_PASSWORD:?run ./scripts/setup.sh first}
+      - DB_NAME=ganymede-prd
+      - DB_SSL=disable
+      # Twitch application
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID:?set TWITCH_CLIENT_ID in config.env}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET:?set TWITCH_CLIENT_SECRET in config.env}
+      # Low-resource worker settings: one task of each type at a time.
+      - MAX_CHAT_DOWNLOAD_EXECUTIONS=1
+      - MAX_CHAT_RENDER_EXECUTIONS=1
+      - MAX_VIDEO_DOWNLOAD_EXECUTIONS=1
+      - MAX_VIDEO_CONVERT_EXECUTIONS=1
+      - MAX_VIDEO_SPRITE_THUMBNAIL_EXECUTIONS=1
+      # Frontend
+      - SHOW_SSO_LOGIN_BUTTON=false
+      - FORCE_SSO_AUTH=false
+      - REQUIRE_LOGIN=true
+    volumes:
+      - ${ARCHIVE_DIR:?set ARCHIVE_DIR in config.env}:/data/videos
+      - ./data/logs:/data/logs
+      - ./data/config:/data/config
+    ports:
+      - ${WEB_BIND:-127.0.0.1}:${WEB_PORT:-4800}:4000
+    cpus: ${GANYMEDE_CPUS:-1.5}
+    mem_limit: ${GANYMEDE_MEMORY:-1g}
+    cpu_shares: 512 # lower priority than desktop apps when CPU is contended
+    logging: *default-logging
+    healthcheck:
+      test: curl --fail http://localhost:4000/health || exit 1
+      interval: 120s
+      retries: 5
+      start_period: 60s
+      timeout: 10s
+
+  ganymede-db:
+    container_name: ganymede-db
+    image: postgres:14-alpine
+    restart: unless-stopped
+    # Small-footprint Postgres tuning (Ganymede's dataset is tiny).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=32MB
+      - -c
+      - effective_cache_size=128MB
+      - -c
+      - work_mem=2MB
+      - -c
+      - maintenance_work_mem=16MB
+      - -c
+      - max_connections=40
+      - -c
+      - max_wal_size=256MB
+      - -c
+      - synchronous_commit=off
+    volumes:
+      - ./data/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_PASSWORD=${DB_PASSWORD:?run ./scripts/setup.sh first}
+      - POSTGRES_USER=ganymede
+      - POSTGRES_DB=ganymede-prd
+    # No published port: the DB is only reachable by the ganymede container.
+    cpus: ${DB_CPUS:-0.5}
+    mem_limit: ${DB_MEMORY:-256m}
+    cpu_shares: 512
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 60s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

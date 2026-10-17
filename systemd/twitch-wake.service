@@ -1,0 +1,10 @@
+[Unit]
+Description=Twitch VOD Archiver - stay awake after a scheduled wake to catch a stream
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@PROJECT_DIR@/scripts/scheduled-wake.sh
+KillMode=control-group
+Nice=19

@@ -1,0 +1,6 @@
+# Local configuration & secrets
+config.env
+.secrets.env
+
+# Runtime data (DB, logs, Ganymede config)
+data/

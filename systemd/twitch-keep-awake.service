@@ -1,0 +1,20 @@
+[Unit]
+Description=Twitch VOD Archiver - keep PC awake only while recording
+Documentation=file://@PROJECT_DIR@/README.md
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@PROJECT_DIR@/scripts/keep-awake.sh
+Restart=always
+RestartSec=15
+KillMode=control-group
+# Be as unobtrusive as possible.
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=5%
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target
